@@ -232,10 +232,17 @@ func ensureExcludeLoopbackIP(t *testing.T, ip string) {
 		t.Skip("docker not available")
 	}
 	cname := containerName()
-	// Idempotent: ignore "File exists".
-	out, err := exec.Command("docker", "exec", cname, "ip", "addr", "add", ip+"/32", "dev", "lo").CombinedOutput()
+	// Potato image is scratch (no `ip`). Add the lo alias from a short-lived
+	// alpine sidecar sharing the Potato netns.
+	out, err := exec.Command(
+		"docker", "run", "--rm",
+		"--network", "container:"+cname,
+		"--cap-add=NET_ADMIN",
+		"alpine:3.20",
+		"ip", "addr", "add", ip+"/32", "dev", "lo",
+	).CombinedOutput()
 	if err != nil && !strings.Contains(string(out), "File exists") {
-		t.Fatalf("ip addr add %s/32: %v\n%s", ip, err, out)
+		t.Fatalf("ip addr add %s/32 via alpine: %v\n%s", ip, err, out)
 	}
 }
 
