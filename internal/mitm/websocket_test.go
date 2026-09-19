@@ -31,6 +31,32 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 	}
 }
 
+func TestBufferResponseBody(t *testing.T) {
+	html := "<html><body>ok</body></html>"
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/html"}},
+		Body:       io.NopCloser(strings.NewReader(html)),
+		// Chunked-style: no Content-Length
+	}
+	if err := bufferResponseBody(resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.ContentLength != int64(len(html)) {
+		t.Fatalf("ContentLength=%d", resp.ContentLength)
+	}
+	if resp.Header.Get("Content-Length") != strconv.Itoa(len(html)) {
+		t.Fatalf("header %q", resp.Header.Get("Content-Length"))
+	}
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != html {
+		t.Fatalf("body=%q", got)
+	}
+}
+
 func TestTunnelLeftover(t *testing.T) {
 	cApp, cProxy := net.Pipe()
 	uOrigin, uProxy := net.Pipe()

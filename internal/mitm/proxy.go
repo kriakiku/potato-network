@@ -2,6 +2,7 @@ package mitm
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -121,8 +122,8 @@ func (p *Proxy) handleHTTP(br *bufio.Reader, client net.Conn, origIP string, ori
 	if req.URL != nil {
 		path = req.URL.Path
 	}
-	p.applyPathDelay("response", host, path, resp.StatusCode, req.Header, resp.Header)
 	if isWebSocketUpgrade(req, resp) {
+		p.applyPathDelay("response", host, path, resp.StatusCode, req.Header, resp.Header)
 		err = resp.Write(client)
 		resp.Body.Close()
 		if err != nil {
@@ -132,7 +133,12 @@ func (p *Proxy) handleHTTP(br *bufio.Reader, client net.Conn, origIP string, ori
 		tunnel(client, br, up, ubr)
 		return
 	}
-	defer resp.Body.Close()
+	if err := bufferResponseBody(resp); err != nil {
+		resp.Body.Close()
+		log.Printf("mitm buffer body: %v", err)
+		return
+	}
+	p.applyPathDelay("response", host, path, resp.StatusCode, req.Header, resp.Header)
 	_ = resp.Write(client)
 }
 
@@ -154,6 +160,7 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 	tlsClient := tls.Server(&peekConn{Reader: br, Conn: client}, &tls.Config{
 		Certificates: []tls.Certificate{*tlsCert},
 		MinVersion:   tls.VersionTLS12,
+		NextProtos:   []string{"http/1.1"},
 	})
 	if err := tlsClient.Handshake(); err != nil {
 		return
@@ -166,7 +173,12 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 		return
 	}
 	defer rawUp.Close()
-	tlsUp := tls.Client(rawUp, &tls.Config{ServerName: host, InsecureSkipVerify: p.tlsInsecure, MinVersion: tls.VersionTLS12})
+	tlsUp := tls.Client(rawUp, &tls.Config{
+		ServerName:         host,
+		InsecureSkipVerify: p.tlsInsecure,
+		MinVersion:         tls.VersionTLS12,
+		NextProtos:         []string{"http/1.1"},
+	})
 	if err := tlsUp.Handshake(); err != nil {
 		return
 	}
@@ -192,8 +204,8 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 		if err != nil {
 			return
 		}
-		p.applyPathDelay("response", host, path, resp.StatusCode, req.Header, resp.Header)
 		if isWebSocketUpgrade(req, resp) {
+			p.applyPathDelay("response", host, path, resp.StatusCode, req.Header, resp.Header)
 			err = resp.Write(tlsClient)
 			resp.Body.Close()
 			if err != nil {
@@ -203,8 +215,13 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 			tunnel(tlsClient, cbr, tlsUp, ubr)
 			return
 		}
+		if err := bufferResponseBody(resp); err != nil {
+			resp.Body.Close()
+			log.Printf("mitm buffer body: %v", err)
+			return
+		}
+		p.applyPathDelay("response", host, path, resp.StatusCode, req.Header, resp.Header)
 		err = resp.Write(tlsClient)
-		resp.Body.Close()
 		if err != nil {
 			return
 		}
@@ -276,6 +293,30 @@ func (p *Proxy) applyPathDelay(phase, host, path string, statusCode int, reqH, r
 	if res.DelayMs > 0 {
 		time.Sleep(time.Duration(res.DelayMs) * time.Millisecond)
 	}
+}
+
+// bufferResponseBody drains the upstream body into memory so path delay can
+// sleep without stalling the origin (which would reset and yield empty/partial
+// responses to the client — Chrome ERR_EMPTY_RESPONSE).
+func bufferResponseBody(resp *http.Response) error {
+	if resp.Body == nil {
+		resp.Body = io.NopCloser(strings.NewReader(""))
+		resp.ContentLength = 0
+		resp.Header.Del("Transfer-Encoding")
+		resp.Header.Set("Content-Length", "0")
+		return nil
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return err
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	resp.TransferEncoding = nil
+	resp.Header.Del("Transfer-Encoding")
+	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	return nil
 }
 
 func headerMap(h http.Header) map[string]string {
