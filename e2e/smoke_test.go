@@ -159,17 +159,23 @@ func TestE2E_ShapeExcludeBypassesPathDelay(t *testing.T) {
 	t.Logf("excluded TTFB=%s control TTFB=%s", excluded, control)
 
 	// Excluded IP skips MITM redirect → no rules path delay.
-	if excluded > 150*time.Millisecond {
-		t.Fatalf("excluded IP TTFB %s too slow (want ≤150ms; SHAPE_EXCLUDE should skip MITM)", excluded)
+	// Allow generous slack for cold curl in shared netns (want clearly under path delay).
+	if excluded > 200*time.Millisecond {
+		t.Fatalf("excluded IP TTFB %s too slow (want ≤200ms; SHAPE_EXCLUDE should skip MITM)", excluded)
 	}
 	// Control still goes through MITM + delay_ms 250.
 	if control < 180*time.Millisecond {
 		t.Fatalf("control TTFB %s too fast (want ≥180ms with delay_ms 250)", control)
 	}
+	// Excluded must be meaningfully faster than control when path delay is 250ms.
+	if excluded >= control {
+		t.Fatalf("excluded TTFB %s should be faster than control %s", excluded, control)
+	}
 }
 
 func TestE2E_WebSocketEchoViaMITM(t *testing.T) {
 	waitHealthy(t, 60*time.Second)
+	waitOrigin(t, 30*time.Second)
 	waitWSEcho(t, 30*time.Second)
 	putPassthrough(t)
 
@@ -177,23 +183,24 @@ func TestE2E_WebSocketEchoViaMITM(t *testing.T) {
 		t.Skip("docker not available")
 	}
 	start := time.Now()
+	// ws://127.0.0.1:80 is REDIRECT'd into MITM, then dialMarked back to origin.
 	out, err := exec.Command(
 		"docker", "run", "--rm",
 		"--network", "container:"+containerName(),
 		"potatonetwork-wsecho:e2e",
-		"-client", "ws://127.0.0.1:8765/",
+		"-client", "ws://127.0.0.1/",
 	).CombinedOutput()
 	elapsed := time.Since(start)
 	if err != nil {
-		t.Fatalf("wsecho client: %v\n%s", err, out)
+		t.Fatalf("wsecho client via MITM: %v\n%s", err, out)
 	}
 	if !strings.Contains(string(out), "ok") {
 		t.Fatalf("unexpected client output: %s", out)
 	}
-	if elapsed > 2*time.Second {
-		t.Fatalf("websocket echo took %s (want <2s)", elapsed)
+	if elapsed > 5*time.Second {
+		t.Fatalf("websocket echo took %s (want <5s)", elapsed)
 	}
-	t.Logf("websocket echo ok in %s", elapsed)
+	t.Logf("websocket echo via MITM ok in %s", elapsed)
 }
 
 func waitWSEcho(t *testing.T, timeout time.Duration) {
@@ -208,7 +215,7 @@ func waitWSEcho(t *testing.T, timeout time.Duration) {
 			"docker", "run", "--rm",
 			"--network", "container:"+containerName(),
 			"potatonetwork-wsecho:e2e",
-			"-client", "ws://127.0.0.1:8765/",
+			"-client", "ws://127.0.0.1/",
 		).CombinedOutput()
 		last = strings.TrimSpace(string(out))
 		if err == nil && strings.Contains(last, "ok") {
@@ -216,7 +223,7 @@ func waitWSEcho(t *testing.T, timeout time.Duration) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("wsecho :8765 not ready within %s: last=%q", timeout, last)
+	t.Fatalf("wsecho via MITM :80 not ready within %s: last=%q", timeout, last)
 }
 
 func ensureExcludeLoopbackIP(t *testing.T, ip string) {

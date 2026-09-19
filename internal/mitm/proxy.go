@@ -214,8 +214,6 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 	}
 }
 
-const wsTunnelIdle = 30 * time.Minute
-
 func isWebSocketUpgrade(req *http.Request, resp *http.Response) bool {
 	if resp == nil || resp.StatusCode != http.StatusSwitchingProtocols {
 		return false
@@ -235,28 +233,39 @@ func headerHasToken(h http.Header, key, want string) bool {
 	return false
 }
 
+// clearDeadlines removes I/O deadlines for long-lived WebSocket tunnels
+// (sitespeed pageLoad can run several minutes; games stay open longer).
 func clearDeadlines(conns ...interface{ SetDeadline(time.Time) error }) {
 	for _, c := range conns {
-		_ = c.SetDeadline(time.Now().Add(wsTunnelIdle))
+		_ = c.SetDeadline(time.Time{})
 	}
 }
 
 // tunnel relays bytes both ways after a WebSocket upgrade, draining bufio leftovers first.
+// When either direction ends, both sockets are closed so the peer copy unblocks.
 func tunnel(client net.Conn, cbr *bufio.Reader, upstream net.Conn, ubr *bufio.Reader) {
-	errc := make(chan struct{}, 2)
+	var once sync.Once
+	done := make(chan struct{})
+	finish := func() {
+		once.Do(func() {
+			_ = client.Close()
+			_ = upstream.Close()
+			close(done)
+		})
+	}
 	go func() {
 		_, _ = io.Copy(upstream, cbr)
-		errc <- struct{}{}
+		finish()
 	}()
 	go func() {
 		_, _ = io.Copy(client, ubr)
-		errc <- struct{}{}
+		finish()
 	}()
-	<-errc
+	<-done
 }
 
 func (p *Proxy) applyPathDelay(phase, host, path string, reqH, respH http.Header) {
-	if p.state.Profile().Passthrough {
+	if p.rules == nil || p.state.Profile().Passthrough {
 		return
 	}
 	res, err := p.rules.Eval(phase, host, path, headerMap(reqH), headerMap(respH))

@@ -23,16 +23,8 @@ services:
       - net.ipv4.ip_forward=1
 
   # Same netns: MITM REDIRECT :80 → proxy → dialMarked back to this origin.
-  # Loopback skips netem; this asserts rules path delay, not last-mile qdisc.
+  # Serves plain HTTP ("potato-e2e-origin") and WebSocket echo on :80.
   origin:
-    image: hashicorp/http-echo:1.0
-    network_mode: "service:potatonetwork"
-    depends_on:
-      - potatonetwork
-    command: ["-text=potato-e2e-origin", "-listen=:80"]
-
-  # WebSocket echo on :8765 (plain ws://); client image used one-shot in e2e tests.
-  wsecho:
     build: ./e2e/wsecho
     image: potatonetwork-wsecho:e2e
     network_mode: "service:potatonetwork"

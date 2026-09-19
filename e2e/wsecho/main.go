@@ -1,4 +1,7 @@
-// Minimal WebSocket echo for e2e: server on :8765, or -client ws://… one-shot.
+// Dual-purpose e2e origin on :80 (MITM-redirected):
+//   GET /          → potato-e2e-origin (path-delay / shape-exclude tests)
+//   WebSocket /    → echo (MITM tunnel tests)
+//   -client ws://… → one-shot client for e2e harness
 package main
 
 import (
@@ -8,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"golang.org/x/net/websocket"
@@ -15,18 +19,29 @@ import (
 
 func main() {
 	clientURL := flag.String("client", "", "if set, connect and echo-check then exit")
-	addr := flag.String("addr", ":8765", "listen address (server mode)")
+	addr := flag.String("addr", ":80", "listen address (server mode)")
 	flag.Parse()
 
 	if *clientURL != "" {
 		os.Exit(runClient(*clientURL))
 	}
 
-	http.Handle("/", websocket.Handler(func(ws *websocket.Conn) {
-		_, _ = io.Copy(ws, ws)
-	}))
-	log.Printf("wsecho listening %s", *addr)
-	log.Fatal(http.ListenAndServe(*addr, nil))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if isWSUpgrade(r) {
+			websocket.Handler(func(ws *websocket.Conn) {
+				_, _ = io.Copy(ws, ws)
+			}).ServeHTTP(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, "potato-e2e-origin")
+	})
+	log.Printf("e2e origin listening %s (http+ws)", *addr)
+	log.Fatal(http.ListenAndServe(*addr, mux))
+}
+
+func isWSUpgrade(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
 }
 
 func runClient(url string) int {
@@ -36,7 +51,7 @@ func runClient(url string) int {
 		return 1
 	}
 	defer ws.Close()
-	_ = ws.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = ws.SetDeadline(time.Now().Add(5 * time.Second))
 
 	const payload = "ping"
 	if err := websocket.Message.Send(ws, payload); err != nil {
