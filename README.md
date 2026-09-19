@@ -64,7 +64,7 @@ services:
 
 Sidecars share the netns, so DNS is already `127.0.0.1` after PotatoNetwork rewrites resolv.conf. Trust CA from `/data/ca/potatonetwork-ca.pem` or `GET /v1/ca.pem`.
 
-DNS forwarder RTT, TLS handshakes (client MITM + upstream origin), HTTP TTFB, and WebSocket upgrade / time-to-first-frame accumulate in memory (paths without query). An **event log** (`http_start` / `ws_start` with `atUnixMs`) is included for video-overlay sync. **`slowHTTP`** lists the top 5 longest individual HTTP start→response samples (WebSocket excluded). Read with `GET /v1/stats`, clear with `POST /v1/stats/reset`.
+DNS forwarder RTT, TLS handshakes (client MITM + upstream origin), HTTP TTFB, and WebSocket upgrade / time-to-first-frame accumulate in memory (paths without query). An **event log** (`http_start` / `ws_start` with `atUnixMs`) is included for video-overlay sync. **`slowHTTP`** lists the top 5 longest individual HTTP start→response samples (WebSocket excluded). **`cfCache`** maps raw Cloudflare `cf-cache-status` values to counts (`NONE` = not Cloudflare). Read with `GET /v1/stats`, clear with `POST /v1/stats/reset`.
 
 ## Data volume (`/data`)
 

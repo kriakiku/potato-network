@@ -139,3 +139,23 @@ func TestSlowHTTPTop5(t *testing.T) {
 		t.Fatal("slowHTTP not cleared on reset")
 	}
 }
+
+func TestCFCacheCounters(t *testing.T) {
+	s := New()
+	s.RecordCFCache("HIT")
+	s.RecordCFCache("HIT")
+	s.RecordCFCache("MISS")
+	s.RecordCFCache("DYNAMIC")
+	s.RecordCFCache("NONE")
+	s.RecordCFCache("STALE")
+	snap := s.Snapshot()
+	if snap.CFCache["HIT"] != 2 || snap.CFCache["MISS"] != 1 ||
+		snap.CFCache["DYNAMIC"] != 1 || snap.CFCache["NONE"] != 1 ||
+		snap.CFCache["STALE"] != 1 {
+		t.Fatalf("cfCache unexpected: %+v", snap.CFCache)
+	}
+	s.Reset()
+	if snap := s.Snapshot(); len(snap.CFCache) != 0 {
+		t.Fatalf("cfCache not cleared: %+v", snap.CFCache)
+	}
+}

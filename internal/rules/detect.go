@@ -28,6 +28,28 @@ func DetectCFHit(h map[string]string) bool {
 	return strings.EqualFold(strings.TrimSpace(h["cf-cache-status"]), "HIT")
 }
 
+// CFCacheNone is the counter key for responses that are not Cloudflare.
+const CFCacheNone = "NONE"
+
+// CFCacheStatus returns the raw Cloudflare cf-cache-status (uppercased), or
+// CFCacheNone when the response is not Cloudflare. CF without a status header
+// uses "UNKNOWN".
+func CFCacheStatus(h map[string]string) string {
+	if !DetectCloudflare(h) {
+		return CFCacheNone
+	}
+	st := strings.ToUpper(strings.TrimSpace(h["cf-cache-status"]))
+	if st == "" {
+		return "UNKNOWN"
+	}
+	return st
+}
+
+// ClassifyCFCache is kept as an alias of CFCacheStatus for callers.
+func ClassifyCFCache(h map[string]string) string {
+	return CFCacheStatus(h)
+}
+
 // DetectCloudfront reports whether response headers look like Amazon CloudFront.
 func DetectCloudfront(h map[string]string) bool {
 	if h == nil {

@@ -154,13 +154,9 @@ if lower(header(response, "via")) contains "cloudfront" {
 Default if missing/empty file:
 
 ```text
-if passthrough {
-  { "delay_ms": 0 }
-} else {
-  { "delay_ms": route("cf") }
-}
+{ "delay_ms": 0 }
 ```
 
-`route("cf")` is always `0` (same edge baseline) — last-mile only until you change the script.
+No extra path delay until you edit the script. `EnsureDefault` only writes this when the file is absent (existing volumes are left alone).
 
 `GET /v1/rules` returns source and compile error (if any).

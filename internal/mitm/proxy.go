@@ -158,6 +158,7 @@ func (p *Proxy) handleHTTP(br *bufio.Reader, client net.Conn, origIP string, ori
 	ttfb := time.Since(reqStart)
 	if isWebSocketUpgrade(req, resp) {
 		clearDeadlines(client, up)
+		p.recordCFCache(resp)
 		p.applyPathDelay("response", host, path, resp.StatusCode, req.Header, resp.Header)
 		err = resp.Write(client)
 		resp.Body.Close()
@@ -182,6 +183,7 @@ func (p *Proxy) handleHTTP(br *bufio.Reader, client net.Conn, origIP string, ori
 	if !wsAttempt && p.stats != nil {
 		p.stats.RecordHTTP(host, req.Method, path, ttfb, false)
 	}
+	p.recordCFCache(resp)
 	if err := bufferResponseBody(resp); err != nil {
 		resp.Body.Close()
 		p.badGateway(client, "buffer upstream body", err)
@@ -287,6 +289,7 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 		ttfb := time.Since(reqStart)
 		if isWebSocketUpgrade(req, resp) {
 			clearDeadlines(tlsClient, tlsUp)
+			p.recordCFCache(resp)
 			p.applyPathDelay("response", host, path, resp.StatusCode, req.Header, resp.Header)
 			err = resp.Write(tlsClient)
 			resp.Body.Close()
@@ -310,6 +313,7 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 		if !wsAttempt && p.stats != nil {
 			p.stats.RecordHTTP(host, req.Method, path, ttfb, false)
 		}
+		p.recordCFCache(resp)
 		if err := bufferResponseBody(resp); err != nil {
 			resp.Body.Close()
 			p.badGateway(tlsClient, "buffer upstream body", err)
@@ -436,6 +440,19 @@ func (p *Proxy) applyPathDelay(phase, host, path string, statusCode int, reqH, r
 	if res.DelayMs > 0 {
 		time.Sleep(time.Duration(res.DelayMs) * time.Millisecond)
 	}
+}
+
+func (p *Proxy) recordCFCache(resp *http.Response) {
+	if p.stats == nil || resp == nil {
+		return
+	}
+	h := make(map[string]string, len(resp.Header))
+	for k, vs := range resp.Header {
+		if len(vs) > 0 {
+			h[strings.ToLower(k)] = vs[0]
+		}
+	}
+	p.stats.RecordCFCache(rules.ClassifyCFCache(h))
 }
 
 // bufferResponseBody drains the upstream body into memory so path delay can

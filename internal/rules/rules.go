@@ -13,12 +13,8 @@ import (
 	"github.com/expr-lang/expr/vm"
 )
 
-// DefaultScript: no path delay (route("cf") is 0); keeps passthrough explicit.
-const DefaultScript = `if passthrough {
-  { "delay_ms": 0 }
-} else {
-  { "delay_ms": route("cf") }
-}`
+// DefaultScript: zero path delay until an operator replaces rules.expr.
+const DefaultScript = `{ "delay_ms": 0 }`
 
 // DefaultMaxDelayMs caps a single path-delay sleep (overridable via ENV).
 const DefaultMaxDelayMs = 60_000

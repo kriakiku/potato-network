@@ -59,6 +59,30 @@ func TestDetectCloudfront(t *testing.T) {
 	}
 }
 
+func TestClassifyCFCache(t *testing.T) {
+	cases := []struct {
+		h    map[string]string
+		want string
+	}{
+		{nil, CFCacheNone},
+		{map[string]string{"server": "nginx"}, CFCacheNone},
+		{map[string]string{"cf-cache-status": "HIT"}, "HIT"},
+		{map[string]string{"cf-cache-status": "stale", "cf-ray": "x"}, "STALE"},
+		{map[string]string{"cf-cache-status": "UPDATING"}, "UPDATING"},
+		{map[string]string{"cf-cache-status": "REVALIDATED"}, "REVALIDATED"},
+		{map[string]string{"cf-cache-status": "DYNAMIC"}, "DYNAMIC"},
+		{map[string]string{"cf-cache-status": "MISS"}, "MISS"},
+		{map[string]string{"cf-cache-status": "EXPIRED"}, "EXPIRED"},
+		{map[string]string{"cf-cache-status": "BYPASS"}, "BYPASS"},
+		{map[string]string{"cf-ray": "abc-SJC"}, "UNKNOWN"},
+	}
+	for _, tc := range cases {
+		if got := CFCacheStatus(tc.h); got != tc.want {
+			t.Fatalf("%v: got %q want %q", tc.h, got, tc.want)
+		}
+	}
+}
+
 func TestDetectWebsocket(t *testing.T) {
 	req := map[string]string{"upgrade": "websocket"}
 	resp := map[string]string{"upgrade": "WebSocket"}

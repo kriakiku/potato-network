@@ -37,7 +37,7 @@ curl -s -X POST "$API/v1/stats/reset"
 Baseline lives in `/data/baseline.json`. Cron: `POTATONETWORK_BASELINE_CRON` (default ~every 3h). Docs home: [PotatoNetwork](https://kriakiku.github.io/potato-network/).
 
 ## DNS / TLS stats
-`GET /v1/stats` returns in-memory aggregates since process start (or last reset): per-domain DNS forwarder RTT, MITM client TLS handshake time (includes synthetic last-mile sleep), upstream origin TLS handshake time, **HTTP request TTFB** (host+method+path, query stripped), **WebSocket** upgrade attempts + time-to-first-frame, an **`events`** array (`http_start` / `ws_start` with `atUnixMs`, query stripped) for aligning custom video overlays, and **`slowHTTP`** (top 5 longest individual HTTP start→response samples; WebSocket excluded). `POST /v1/stats/reset` clears the counters.
+`GET /v1/stats` returns in-memory aggregates since process start (or last reset): per-domain DNS forwarder RTT, MITM client TLS handshake time (includes synthetic last-mile sleep), upstream origin TLS handshake time, **HTTP request TTFB** (host+method+path, query stripped), **WebSocket** upgrade attempts + time-to-first-frame, an **`events`** array (`http_start` / `ws_start` with `atUnixMs`, query stripped) for aligning custom video overlays, **`slowHTTP`** (top 5 longest individual HTTP start→response samples; WebSocket excluded), and **`cfCache`** (map of raw `cf-cache-status` → count; key `NONE` = not Cloudflare). `POST /v1/stats/reset` clears the counters.
 
 Default host in the generated OpenAPI spec: `localhost:7783` (base path `/`).
 
@@ -338,6 +338,7 @@ Produces: `application/json`
 | `websocket` | `RequestStat[]` | no | `started` = upgrade attempts; latency = first frame |
 | `events` | `Event[]` | no | ring-buffered `http_start` / `ws_start` timeline (`atUnixMs`) |
 | `slowHTTP` | `HTTPSample[]` | no | top 5 longest HTTP start→response (desc by `durationMs`; not WS) |
+| `cfCache` | `map<string, integer>` | no | raw `cf-cache-status` → count; `NONE` = not Cloudflare; `UNKNOWN` = CF without status |
 
 ### `Event`
 

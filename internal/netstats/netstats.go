@@ -45,6 +45,8 @@ type Snapshot struct {
 	WebSocket   []RequestStat `json:"websocket"`
 	Events      []Event       `json:"events"`
 	SlowHTTP    []HTTPSample  `json:"slowHTTP"`
+	// CFCache maps cf-cache-status (HIT, MISS, …) → count; "NONE" = not Cloudflare.
+	CFCache map[string]int64 `json:"cfCache"`
 }
 
 // Event is a wall-clock timeline marker (query stripped).
@@ -90,6 +92,7 @@ type Store struct {
 	websocket   map[string]*bucket // key: host\0path
 	events      []Event
 	httpSamples []HTTPSample
+	cfCache     map[string]int64
 }
 
 func New() *Store {
@@ -302,6 +305,20 @@ func (s *Store) RecordWSFirstMessage(host, path string, d time.Duration, failed 
 	s.record(s.websocket, wsKey(host, path), d.Milliseconds(), failed)
 }
 
+// RecordCFCache increments the counter for a cf-cache-status key (or "NONE").
+func (s *Store) RecordCFCache(status string) {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		status = "UNKNOWN"
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cfCache == nil {
+		s.cfCache = map[string]int64{}
+	}
+	s.cfCache[status]++
+}
+
 func snapshotDomainMap(m map[string]*bucket) []DomainStat {
 	out := make([]DomainStat, 0, len(m))
 	for domain, b := range m {
@@ -405,6 +422,10 @@ func (s *Store) Snapshot() Snapshot {
 	defer s.mu.Unlock()
 	events := make([]Event, len(s.events))
 	copy(events, s.events)
+	cf := make(map[string]int64, len(s.cfCache))
+	for k, v := range s.cfCache {
+		cf[k] = v
+	}
 	return Snapshot{
 		DNS:         snapshotDomainMap(s.dns),
 		TLSClient:   snapshotDomainMap(s.tlsClient),
@@ -413,6 +434,7 @@ func (s *Store) Snapshot() Snapshot {
 		WebSocket:   snapshotWS(s.websocket),
 		Events:      events,
 		SlowHTTP:    topSlowHTTP(s.httpSamples, slowHTTPTopN),
+		CFCache:     cf,
 	}
 }
 
@@ -427,4 +449,5 @@ func (s *Store) Reset() {
 	s.websocket = map[string]*bucket{}
 	s.events = nil
 	s.httpSamples = nil
+	s.cfCache = nil
 }

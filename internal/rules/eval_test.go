@@ -22,14 +22,14 @@ func TestEnsureDefault(t *testing.T) {
 	}
 	r, err := e.Eval("response", "example.com", "/", 0, nil, nil)
 	if err != nil || r.DelayMs != 0 {
-		t.Fatalf("default passthrough profile: %+v err=%v", r, err)
+		t.Fatalf("default: %+v err=%v", r, err)
 	}
 	e = New(path, nil, func() ProfileInfo {
 		return ProfileInfo{Country: "BD", Tier: "typical"}
 	}, 0)
 	r, err = e.Eval("response", "example.com", "/", 0, nil, nil)
 	if err != nil || r.DelayMs != 0 {
-		t.Fatalf("default with country (route cf): %+v err=%v", r, err)
+		t.Fatalf("default with country still zero: %+v err=%v", r, err)
 	}
 }
 
