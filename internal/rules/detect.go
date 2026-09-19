@@ -20,6 +20,14 @@ func DetectCloudflare(h map[string]string) bool {
 	return strings.Contains(strings.ToLower(h["server"]), "cloudflare")
 }
 
+// DetectCFHit is true when Cloudflare reports a cache hit (cf-cache-status: HIT).
+func DetectCFHit(h map[string]string) bool {
+	if h == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(h["cf-cache-status"]), "HIT")
+}
+
 // DetectCloudfront reports whether response headers look like Amazon CloudFront.
 func DetectCloudfront(h map[string]string) bool {
 	if h == nil {

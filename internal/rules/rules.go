@@ -161,6 +161,7 @@ func (e *Engine) compileEnv() map[string]any {
 		"passthrough":  false,
 		"status_code":  0,
 		"cloudflare":   false,
+		"cf_hit":       false,
 		"cloudfront":   false,
 		"websocket":    false,
 		"header":       headerFn,
@@ -220,6 +221,7 @@ func (e *Engine) Eval(phase, host, path string, statusCode int, reqH, respH map[
 	env["passthrough"] = p.Passthrough
 	env["status_code"] = statusCode
 	env["cloudflare"] = DetectCloudflare(resp)
+	env["cf_hit"] = DetectCFHit(resp)
 	env["cloudfront"] = DetectCloudfront(resp)
 	env["websocket"] = DetectWebsocket(statusCode, req, resp)
 	out, err := expr.Run(prog, env)

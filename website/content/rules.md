@@ -47,6 +47,7 @@ Max delay defaults to **60000** ms (1 minute). Override with `POTATONETWORK_PATH
 | `passthrough` | `true` when last-mile shaping is off |
 | `status_code` | Origin HTTP status code (int) |
 | `cloudflare` | `true` when the response looks like Cloudflare (`cf-ray`, `cf-cache-status`, or `Server` contains `cloudflare`) |
+| `cf_hit` | `true` when Cloudflare `cf-cache-status` is `HIT` (case-insensitive) |
 | `cloudfront` | `true` when the response looks like CloudFront (`Via` contains `cloudfront`, or `x-amz-cf-id` set) |
 | `websocket` | `true` when status is `101` and both request and response `Upgrade` include `websocket` (same criterion as MITM tunnel) |
 
@@ -112,8 +113,10 @@ Useful when you want PathExtra **and** an independent lab offset (here `jitter(1
 
 ### Skip delay for WebSocket / Cloudflare; soften CloudFront
 
+`cf_hit` is useful when you want zero path delay only for assets already served from CF cache:
+
 ```text
-if websocket {
+if websocket || cf_hit {
   { "delay_ms": 0 }
 } else {
   if cloudflare {

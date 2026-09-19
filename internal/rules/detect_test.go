@@ -23,6 +23,27 @@ func TestDetectCloudflare(t *testing.T) {
 	}
 }
 
+func TestDetectCFHit(t *testing.T) {
+	if DetectCFHit(nil) {
+		t.Fatal("nil")
+	}
+	if !DetectCFHit(map[string]string{"cf-cache-status": "HIT"}) {
+		t.Fatal("HIT")
+	}
+	if !DetectCFHit(map[string]string{"cf-cache-status": "hit"}) {
+		t.Fatal("hit lower")
+	}
+	if DetectCFHit(map[string]string{"cf-cache-status": "MISS"}) {
+		t.Fatal("MISS")
+	}
+	if DetectCFHit(map[string]string{"cf-cache-status": "DYNAMIC"}) {
+		t.Fatal("DYNAMIC")
+	}
+	if DetectCFHit(map[string]string{"cf-ray": "abc"}) {
+		t.Fatal("cf-ray alone")
+	}
+}
+
 func TestDetectCloudfront(t *testing.T) {
 	if DetectCloudfront(nil) {
 		t.Fatal("nil")

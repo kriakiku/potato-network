@@ -168,13 +168,17 @@ func TestEvalCDNAndWebsocketFlags(t *testing.T) {
 	src := `if websocket {
   { "delay_ms": 1 }
 } else {
-  if cloudflare {
-    { "delay_ms": 2 }
+  if cf_hit {
+    { "delay_ms": 4 }
   } else {
-    if cloudfront {
-      { "delay_ms": 3 }
+    if cloudflare {
+      { "delay_ms": 2 }
     } else {
-      { "delay_ms": status_code }
+      if cloudfront {
+        { "delay_ms": 3 }
+      } else {
+        { "delay_ms": status_code }
+      }
     }
   }
 }`
@@ -188,6 +192,12 @@ func TestEvalCDNAndWebsocketFlags(t *testing.T) {
 		map[string]string{"upgrade": "websocket"})
 	if err != nil || r.DelayMs != 1 {
 		t.Fatalf("websocket: %+v err=%v", r, err)
+	}
+
+	r, err = e.Eval("response", "h", "/", http.StatusOK, nil,
+		map[string]string{"cf-cache-status": "HIT"})
+	if err != nil || r.DelayMs != 4 {
+		t.Fatalf("cf_hit: %+v err=%v", r, err)
 	}
 
 	r, err = e.Eval("response", "h", "/", http.StatusOK,
