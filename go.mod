@@ -12,10 +12,14 @@ require (
 )
 
 require (
+	github.com/andybalholm/brotli v1.0.6 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
+	github.com/klauspost/compress v1.17.4 // indirect
 	github.com/mdlayher/netlink v1.7.3-0.20250113171957-fbb4dce95f42 // indirect
 	github.com/mdlayher/socket v0.5.0 // indirect
+	github.com/refraction-networking/utls v1.8.2 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
+	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 )

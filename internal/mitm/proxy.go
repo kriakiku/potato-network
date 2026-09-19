@@ -155,6 +155,8 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 	host := origIP
 	if h, err := peekSNI(br); err == nil && h != "" {
 		host = h
+	} else if err != nil {
+		log.Printf("mitm SNI peek failed (using IP %s): %v", origIP, err)
 	}
 
 	tlsCert, err := p.leafCert(host)
@@ -179,12 +181,8 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 		return
 	}
 	defer rawUp.Close()
-	tlsUp := tls.Client(rawUp, &tls.Config{
-		ServerName:         host,
-		InsecureSkipVerify: p.tlsInsecure,
-		MinVersion:         tls.VersionTLS12,
-	})
-	if err := tlsUp.Handshake(); err != nil {
+	tlsUp, err := dialUpstreamTLS(rawUp, host, p.tlsInsecure)
+	if err != nil {
 		p.badGateway(tlsClient, "upstream TLS handshake", err)
 		return
 	}
@@ -267,7 +265,6 @@ func clearDeadlines(conns ...interface{ SetDeadline(time.Time) error }) {
 		_ = c.SetDeadline(time.Time{})
 	}
 }
-
 
 func writeBadGateway(w io.Writer, err error) {
 	msg := "Bad Gateway"
@@ -386,12 +383,25 @@ type peekConn struct {
 func (c *peekConn) Read(p []byte) (int, error) { return c.Reader.Read(p) }
 
 func peekSNI(br *bufio.Reader) (string, error) {
-	data, err := br.Peek(1024)
-	if err != nil && len(data) < 43 {
+	hdr, err := br.Peek(5)
+	if err != nil && len(hdr) < 5 {
+		return "", fmt.Errorf("short header: %w", err)
+	}
+	if len(hdr) < 5 || hdr[0] != 0x16 {
+		return "", fmt.Errorf("not handshake")
+	}
+	recordLen := int(hdr[3])<<8 | int(hdr[4])
+	need := 5 + recordLen
+	if need < 43 {
 		return "", fmt.Errorf("short")
 	}
-	if len(data) < 43 || data[0] != 0x16 {
-		return "", fmt.Errorf("not handshake")
+	// Cap absurd lengths; a normal ClientHello fits well under this.
+	if need > 64<<10 {
+		need = 64 << 10
+	}
+	data, err := br.Peek(need)
+	if err != nil && len(data) < 43 {
+		return "", fmt.Errorf("short body: %w", err)
 	}
 	return parseSNI(data)
 }
