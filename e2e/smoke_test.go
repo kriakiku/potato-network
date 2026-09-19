@@ -168,6 +168,57 @@ func TestE2E_ShapeExcludeBypassesPathDelay(t *testing.T) {
 	}
 }
 
+func TestE2E_WebSocketEchoViaMITM(t *testing.T) {
+	waitHealthy(t, 60*time.Second)
+	waitWSEcho(t, 30*time.Second)
+	putPassthrough(t)
+
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not available")
+	}
+	start := time.Now()
+	out, err := exec.Command(
+		"docker", "run", "--rm",
+		"--network", "container:"+containerName(),
+		"potatonetwork-wsecho:e2e",
+		"-client", "ws://127.0.0.1:8765/",
+	).CombinedOutput()
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("wsecho client: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "ok") {
+		t.Fatalf("unexpected client output: %s", out)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("websocket echo took %s (want <2s)", elapsed)
+	}
+	t.Logf("websocket echo ok in %s", elapsed)
+}
+
+func waitWSEcho(t *testing.T, timeout time.Duration) {
+	t.Helper()
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not available")
+	}
+	deadline := time.Now().Add(timeout)
+	var last string
+	for time.Now().Before(deadline) {
+		out, err := exec.Command(
+			"docker", "run", "--rm",
+			"--network", "container:"+containerName(),
+			"potatonetwork-wsecho:e2e",
+			"-client", "ws://127.0.0.1:8765/",
+		).CombinedOutput()
+		last = strings.TrimSpace(string(out))
+		if err == nil && strings.Contains(last, "ok") {
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("wsecho :8765 not ready within %s: last=%q", timeout, last)
+}
+
 func ensureExcludeLoopbackIP(t *testing.T, ip string) {
 	t.Helper()
 	if _, err := exec.LookPath("docker"); err != nil {

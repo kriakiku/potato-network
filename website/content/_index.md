@@ -48,7 +48,7 @@ API traffic and DNS **upstream** queries are fwmark-exempt from netem (nftables 
 | **Country last-mile** | Delay, loss, down/up rates from a Radar-backed catalog (stable / typical / poor tiers) |
 | **Shared Docker netns** | Sidecars inherit shaping automatically — no SOCKS config, no per-app agents |
 | **Shaped DNS** | Local `:53` forwarder so lookups suffer the same last-mile as TCP |
-| **Transparent MITM** | nftables REDIRECT of 80/443 → in-process TLS terminator; path delay via [`rules.expr`](rules) |
+| **Transparent MITM** | nftables REDIRECT of 80/443 → in-process TLS terminator; path delay via [`rules.expr`](rules); `ws`/`wss` upgraded to a duplex tunnel after `101` |
 | **Per-endpoint path rules** | Same host, different delay: e.g. static already on a Cloudflare edge vs `/api/*` that still hits AWS |
 | **Host baseline** | Persisted RTT probe so delay = country − *your* edge, not absolute fiction |
 | **API-only control** | `PUT /v1/profile`, CA download, catalog refresh — CI-friendly, no panel |

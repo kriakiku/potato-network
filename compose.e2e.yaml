@@ -30,3 +30,11 @@ services:
     depends_on:
       - potatonetwork
     command: ["-text=potato-e2e-origin", "-listen=:80"]
+
+  # WebSocket echo on :8765 (plain ws://); client image used one-shot in e2e tests.
+  wsecho:
+    build: ./e2e/wsecho
+    image: potatonetwork-wsecho:e2e
+    network_mode: "service:potatonetwork"
+    depends_on:
+      - potatonetwork

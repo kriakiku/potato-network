@@ -14,3 +14,5 @@ It does **not** model live path quirks of that geography, for example:
 - Exact DNS resolver topology or anycast routing from that country
 
 Use it for labs, QA, and “good enough” distance/last-mile stress — not as a substitute for real probes or on-the-ground measurements when those specifics matter.
+
+**WebSockets:** `ws://` and `wss://` through transparent MITM are supported (HTTP/1.1 `101` then a raw bidirectional tunnel). Path delay from `rules.expr` applies to the upgrade handshake only, not to individual frames. WebSocket over HTTP/2 and per-frame shaping are not implemented.

@@ -119,7 +119,7 @@ go run -tags genapi ./cmd/genapi/
 ## Tests
 
 - `go test ./...` — unit tests (no root / Docker).
-- `go test -tags e2e ./e2e/` — integration against `compose.e2e.yaml` (local origin `:80`, not the public internet).
+- `go test -tags e2e ./e2e/` — integration against `compose.e2e.yaml` (local HTTP origin `:80`, WebSocket echo `:8765`).
 - `go run -tags gallery ./cmd/gengallery/` — regenerate profiles gallery markdown.
 - `go run -tags genapi ./cmd/genapi/` — regenerate API markdown from `website/static/swagger.json`.
 - `go run -tags radar ./cmd/genradar/` — refresh Radar/CloudPing catalog (optional `CLOUDFLARE_API_TOKEN`).

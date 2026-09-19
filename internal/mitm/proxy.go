@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -108,15 +109,30 @@ func (p *Proxy) handleHTTP(br *bufio.Reader, client net.Conn, origIP string, ori
 		return
 	}
 	defer up.Close()
+	ubr := bufio.NewReader(up)
 	if err := req.Write(up); err != nil {
 		return
 	}
-	resp, err := http.ReadResponse(bufio.NewReader(up), req)
+	resp, err := http.ReadResponse(ubr, req)
 	if err != nil {
 		return
 	}
+	path := "/"
+	if req.URL != nil {
+		path = req.URL.Path
+	}
+	p.applyPathDelay("response", host, path, req.Header, resp.Header)
+	if isWebSocketUpgrade(req, resp) {
+		err = resp.Write(client)
+		resp.Body.Close()
+		if err != nil {
+			return
+		}
+		clearDeadlines(client, up)
+		tunnel(client, br, up, ubr)
+		return
+	}
 	defer resp.Body.Close()
-	p.applyPathDelay("response", host, req.URL.Path, req.Header, resp.Header)
 	_ = resp.Write(client)
 }
 
@@ -177,6 +193,16 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 			return
 		}
 		p.applyPathDelay("response", host, path, req.Header, resp.Header)
+		if isWebSocketUpgrade(req, resp) {
+			err = resp.Write(tlsClient)
+			resp.Body.Close()
+			if err != nil {
+				return
+			}
+			clearDeadlines(tlsClient, tlsUp)
+			tunnel(tlsClient, cbr, tlsUp, ubr)
+			return
+		}
 		err = resp.Write(tlsClient)
 		resp.Body.Close()
 		if err != nil {
@@ -186,6 +212,47 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 			return
 		}
 	}
+}
+
+const wsTunnelIdle = 30 * time.Minute
+
+func isWebSocketUpgrade(req *http.Request, resp *http.Response) bool {
+	if resp == nil || resp.StatusCode != http.StatusSwitchingProtocols {
+		return false
+	}
+	return headerHasToken(req.Header, "Upgrade", "websocket") &&
+		headerHasToken(resp.Header, "Upgrade", "websocket")
+}
+
+func headerHasToken(h http.Header, key, want string) bool {
+	for _, v := range h.Values(key) {
+		for _, part := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), want) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func clearDeadlines(conns ...interface{ SetDeadline(time.Time) error }) {
+	for _, c := range conns {
+		_ = c.SetDeadline(time.Now().Add(wsTunnelIdle))
+	}
+}
+
+// tunnel relays bytes both ways after a WebSocket upgrade, draining bufio leftovers first.
+func tunnel(client net.Conn, cbr *bufio.Reader, upstream net.Conn, ubr *bufio.Reader) {
+	errc := make(chan struct{}, 2)
+	go func() {
+		_, _ = io.Copy(upstream, cbr)
+		errc <- struct{}{}
+	}()
+	go func() {
+		_, _ = io.Copy(client, ubr)
+		errc <- struct{}{}
+	}()
+	<-errc
 }
 
 func (p *Proxy) applyPathDelay(phase, host, path string, reqH, respH http.Header) {
