@@ -73,7 +73,7 @@ func TestTunnelLeftover(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		tunnel(cProxy, cbr, uProxy, ubr)
+		tunnel(cProxy, cbr, uProxy, ubr, nil)
 		close(done)
 	}()
 
@@ -110,7 +110,7 @@ func TestTunnelClosesPeer(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		tunnel(cProxy, bufio.NewReader(cProxy), uProxy, bufio.NewReader(uProxy))
+		tunnel(cProxy, bufio.NewReader(cProxy), uProxy, bufio.NewReader(uProxy), nil)
 		close(done)
 	}()
 
@@ -140,7 +140,7 @@ func TestWebSocketUpgradeTunnelHTTP(t *testing.T) {
 	origPort, _ := strconv.Atoi(origPortStr)
 
 	st := pnruntime.New(t.TempDir(), nil, nil)
-	p := New(0, nil, nil, st, false)
+	p := New(0, nil, nil, st, nil, false)
 
 	proxyLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -193,7 +193,7 @@ func TestWebSocketUpgradeTunnelTLS(t *testing.T) {
 	origPort, _ := strconv.Atoi(origPortStr)
 
 	st := pnruntime.New(t.TempDir(), nil, nil)
-	p := New(0, bundle, nil, st, true) // insecure: origin uses Potato-minted leaf without system trust
+	p := New(0, bundle, nil, st, nil, true) // insecure: origin uses Potato-minted leaf without system trust
 
 	proxyLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

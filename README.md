@@ -64,6 +64,8 @@ services:
 
 Sidecars share the netns, so DNS is already `127.0.0.1` after PotatoNetwork rewrites resolv.conf. Trust CA from `/data/ca/potatonetwork-ca.pem` or `GET /v1/ca.pem`.
 
+DNS forwarder RTT, TLS handshakes (client MITM + upstream origin), HTTP TTFB, and WebSocket upgrade / time-to-first-frame accumulate in memory (paths without query). An **event log** (`http_start` / `ws_start` with `atUnixMs`) is included for video-overlay sync. **`slowHTTP`** lists the top 5 longest individual HTTP start→response samples (WebSocket excluded). Read with `GET /v1/stats`, clear with `POST /v1/stats/reset`.
+
 ## Data volume (`/data`)
 
 | Path | Purpose |
@@ -119,7 +121,7 @@ go run -tags genapi ./cmd/genapi/
 ## Tests
 
 - `go test ./...` — unit tests (no root / Docker).
-- `go test -tags e2e ./e2e/` — integration against `compose.e2e.yaml` (local HTTP origin `:80`, WebSocket echo `:8765`).
+- `go test -tags e2e ./e2e/` — integration against `compose.e2e.yaml` (local HTTP origin `:80` + `/sleep/{ms}`, WebSocket echo). Covers path delay, shape-exclude, WS via MITM, and **`events` / `slowHTTP` top-5** on `GET /v1/stats`.
 - `go run -tags gallery ./cmd/gengallery/` — regenerate profiles gallery markdown.
 - `go run -tags genapi ./cmd/genapi/` — regenerate API markdown from `website/static/swagger.json`.
 - `go run -tags radar ./cmd/genradar/` — refresh Radar/CloudPing catalog (optional `CLOUDFLARE_API_TOKEN`).

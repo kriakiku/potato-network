@@ -30,9 +30,14 @@ curl -s -X PUT "$API/v1/profile" -H 'Content-Type: application/json' \
 -d '{"country":"BD","tier":"typical"}'
 curl -s -X PUT "$API/v1/profile" -H 'Content-Type: application/json' \
 -d '{"passthrough":true}'
+curl -s "$API/v1/stats"
+curl -s -X POST "$API/v1/stats/reset"
 ```
 
 Baseline lives in `/data/baseline.json`. Cron: `POTATONETWORK_BASELINE_CRON` (default ~every 3h). Docs home: [PotatoNetwork](https://kriakiku.github.io/potato-network/).
+
+## DNS / TLS stats
+`GET /v1/stats` returns in-memory aggregates since process start (or last reset): per-domain DNS forwarder RTT, MITM client TLS handshake time (includes synthetic last-mile sleep), upstream origin TLS handshake time, **HTTP request TTFB** (host+method+path, query stripped), **WebSocket** upgrade attempts + time-to-first-frame, an **`events`** array (`http_start` / `ws_start` with `atUnixMs`, query stripped) for aligning custom video overlays, and **`slowHTTP`** (top 5 longest individual HTTP start→response samples; WebSocket excluded). `POST /v1/stats/reset` clears the counters.
 
 Default host in the generated OpenAPI spec: `localhost:7783` (base path `/`).
 
@@ -206,6 +211,34 @@ Produces: `application/json`
 | `200` | `RulesStatus` | OK |
 | `401` | `ErrorResponse` | Unauthorized |
 
+### stats
+
+#### `GET /v1/stats`
+
+Get DNS/TLS stats
+
+Auth: optional Bearer when `POTATONETWORK_API_TOKEN` is set.
+
+Produces: `application/json`
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| `200` | `Snapshot` | OK |
+| `401` | `ErrorResponse` | Unauthorized |
+
+#### `POST /v1/stats/reset`
+
+Reset DNS/TLS stats
+
+Auth: optional Bearer when `POTATONETWORK_API_TOKEN` is set.
+
+Produces: `application/json`
+
+| Status | Schema | Description |
+| --- | --- | --- |
+| `200` | `StatsResetResponse` | OK |
+| `401` | `ErrorResponse` | Unauthorized |
+
 ## Schemas
 
 ### `BaselinePutRequest`
@@ -287,6 +320,74 @@ Produces: `application/json`
 | `calibrate` | `string` | no |  |
 | `label` | `string` | no |  |
 | `target` | `string` | no |  |
+
+### `StatsResetResponse`
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `ok` | `boolean` | no | example: `true` |
+
+### `Snapshot`
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `dns` | `DomainStat[]` | no |  |
+| `tlsClient` | `DomainStat[]` | no |  |
+| `tlsUpstream` | `DomainStat[]` | no |  |
+| `http` | `RequestStat[]` | no | query stripped from path |
+| `websocket` | `RequestStat[]` | no | `started` = upgrade attempts; latency = first frame |
+| `events` | `Event[]` | no | ring-buffered `http_start` / `ws_start` timeline (`atUnixMs`) |
+| `slowHTTP` | `HTTPSample[]` | no | top 5 longest HTTP start→response (desc by `durationMs`; not WS) |
+
+### `Event`
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `kind` | `string` | yes | `http_start` or `ws_start` |
+| `host` | `string` | yes |  |
+| `method` | `string` | no | HTTP only |
+| `path` | `string` | yes | query stripped |
+| `atUnixMs` | `integer` | yes | wall-clock ms |
+
+### `HTTPSample`
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `host` | `string` | yes |  |
+| `method` | `string` | yes |  |
+| `path` | `string` | yes | query stripped |
+| `durationMs` | `integer` | yes | start → response/error |
+| `failed` | `boolean` | yes |  |
+| `atUnixMs` | `integer` | yes | when the sample was recorded |
+
+### `RequestStat`
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `host` | `string` | no |  |
+| `method` | `string` | no | HTTP only |
+| `path` | `string` | no | no query/hash |
+| `count` | `integer` | no |  |
+| `started` | `integer` | no | WebSocket upgrade attempts |
+| `errorCount` | `integer` | no |  |
+| `latencyMs` | `Latency` | no |  |
+
+### `DomainStat`
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `domain` | `string` | no |  |
+| `count` | `integer` | no |  |
+| `errorCount` | `integer` | no |  |
+| `latencyMs` | `Latency` | no |  |
+
+### `Latency`
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `sumMs` | `integer` | no |  |
+| `minMs` | `integer` | no |  |
+| `maxMs` | `integer` | no |  |
 
 ### `Tier`
 

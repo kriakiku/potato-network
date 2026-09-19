@@ -10,7 +10,7 @@ import (
 	"github.com/kriakiku/potato-network/internal/ca"
 	"github.com/kriakiku/potato-network/internal/catalog"
 	"github.com/kriakiku/potato-network/internal/config"
-	"github.com/kriakiku/potato-network/internal/profiles"
+	"github.com/kriakiku/potato-network/internal/netstats"
 	"github.com/kriakiku/potato-network/internal/rules"
 	pnruntime "github.com/kriakiku/potato-network/internal/runtime"
 	"github.com/kriakiku/potato-network/internal/shape"
@@ -23,11 +23,15 @@ type Server struct {
 	shape   *shape.Manager
 	rules   *rules.Engine
 	ca      *ca.Bundle
+	stats   *netstats.Store
 	mux     *http.ServeMux
 }
 
-func New(cfg config.Config, st *pnruntime.State, cat *catalog.Manager, sh *shape.Manager, eng *rules.Engine, bundle *ca.Bundle) *Server {
-	s := &Server{cfg: cfg, state: st, catalog: cat, shape: sh, rules: eng, ca: bundle, mux: http.NewServeMux()}
+func New(cfg config.Config, st *pnruntime.State, cat *catalog.Manager, sh *shape.Manager, eng *rules.Engine, bundle *ca.Bundle, stats *netstats.Store) *Server {
+	if stats == nil {
+		stats = netstats.New()
+	}
+	s := &Server{cfg: cfg, state: st, catalog: cat, shape: sh, rules: eng, ca: bundle, stats: stats, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -44,6 +48,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/catalog/refresh", s.handleCatalogRefresh)
 	s.mux.HandleFunc("/v1/ca.pem", s.handleCA)
 	s.mux.HandleFunc("/v1/rules", s.handleRules)
+	s.mux.HandleFunc("/v1/stats", s.handleStats)
+	s.mux.HandleFunc("/v1/stats/reset", s.handleStatsReset)
 }
 
 // cors allows any origin/method/header when an API token is configured
@@ -341,6 +347,41 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleStats returns DNS + TLS aggregates collected since boot or last reset.
+//
+//	@Summary		Get DNS/TLS stats
+//	@Tags			stats
+//	@Produce		json
+//	@Success		200	{object}	netstats.Snapshot
+//	@Failure		401	{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/v1/stats [get]
+func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(405)
+		return
+	}
+	writeJSON(w, 200, s.stats.Snapshot())
+}
+
+// handleStatsReset clears DNS/TLS aggregates.
+//
+//	@Summary		Reset DNS/TLS stats
+//	@Tags			stats
+//	@Produce		json
+//	@Success		200	{object}	StatsResetResponse
+//	@Failure		401	{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/v1/stats/reset [post]
+func (s *Server) handleStatsReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(405)
+		return
+	}
+	s.stats.Reset()
+	writeJSON(w, 200, StatsResetResponse{OK: true})
+}
+
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -357,6 +398,3 @@ func formatTime(t time.Time) string {
 	}
 	return t.UTC().Format(time.RFC3339)
 }
-
-// Silence unused import if swag-only reference patterns change.
-var _ profiles.Profile

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kriakiku/potato-network/internal/ca"
+	"github.com/kriakiku/potato-network/internal/netstats"
 	"github.com/kriakiku/potato-network/internal/rules"
 	pnruntime "github.com/kriakiku/potato-network/internal/runtime"
 )
@@ -25,18 +26,20 @@ type Proxy struct {
 	ca          *ca.Bundle
 	rules       *rules.Engine
 	state       *pnruntime.State
+	stats       *netstats.Store
 	tlsInsecure bool
 	ln          net.Listener
 	certMu      sync.Mutex
 	certs       map[string]*tls.Certificate
 }
 
-func New(port int, bundle *ca.Bundle, eng *rules.Engine, st *pnruntime.State, tlsInsecure bool) *Proxy {
+func New(port int, bundle *ca.Bundle, eng *rules.Engine, st *pnruntime.State, stats *netstats.Store, tlsInsecure bool) *Proxy {
 	return &Proxy{
 		port:        port,
 		ca:          bundle,
 		rules:       eng,
 		state:       st,
+		stats:       stats,
 		tlsInsecure: tlsInsecure,
 		certs:       make(map[string]*tls.Certificate),
 	}
@@ -104,38 +107,80 @@ func (p *Proxy) handleHTTP(br *bufio.Reader, client net.Conn, origIP string, ori
 	if host == "" {
 		host = net.JoinHostPort(origIP, strconv.Itoa(origPort))
 	}
+	path := requestPath(req)
+	wsAttempt := headerHasToken(req.Header, "Upgrade", "websocket")
+	if p.stats != nil {
+		if wsAttempt {
+			p.stats.RecordWSStart(host, path)
+		} else {
+			p.stats.RecordHTTPStart(host, req.Method, path)
+		}
+	}
+	reqStart := time.Now()
 	target := net.JoinHostPort(origIP, strconv.Itoa(origPort))
 	up, err := dialMarked(target)
 	if err != nil {
+		if p.stats != nil {
+			if wsAttempt {
+				p.stats.RecordWSFirstMessage(host, path, time.Since(reqStart), true)
+			} else {
+				p.stats.RecordHTTP(host, req.Method, path, time.Since(reqStart), true)
+			}
+		}
 		p.badGateway(client, "dial upstream", err)
 		return
 	}
 	defer up.Close()
 	ubr := bufio.NewReader(up)
 	if err := req.Write(up); err != nil {
+		if p.stats != nil {
+			if wsAttempt {
+				p.stats.RecordWSFirstMessage(host, path, time.Since(reqStart), true)
+			} else {
+				p.stats.RecordHTTP(host, req.Method, path, time.Since(reqStart), true)
+			}
+		}
 		p.badGateway(client, "write upstream request", err)
 		return
 	}
 	resp, err := http.ReadResponse(ubr, req)
 	if err != nil {
+		if p.stats != nil {
+			if wsAttempt {
+				p.stats.RecordWSFirstMessage(host, path, time.Since(reqStart), true)
+			} else {
+				p.stats.RecordHTTP(host, req.Method, path, time.Since(reqStart), true)
+			}
+		}
 		p.badGateway(client, "read upstream response", err)
 		return
 	}
-	path := "/"
-	if req.URL != nil {
-		path = req.URL.Path
-	}
+	ttfb := time.Since(reqStart)
 	if isWebSocketUpgrade(req, resp) {
 		clearDeadlines(client, up)
 		p.applyPathDelay("response", host, path, resp.StatusCode, req.Header, resp.Header)
 		err = resp.Write(client)
 		resp.Body.Close()
 		if err != nil {
+			if p.stats != nil {
+				p.stats.RecordWSFirstMessage(host, path, time.Since(reqStart), true)
+			}
 			return
 		}
 		clearDeadlines(client, up)
-		tunnel(client, br, up, ubr)
+		tunnel(client, br, up, ubr, func() {
+			if p.stats != nil {
+				p.stats.RecordWSFirstMessage(host, path, time.Since(reqStart), false)
+			}
+		})
 		return
+	}
+	if wsAttempt && p.stats != nil {
+		// Upgrade requested but response was not 101
+		p.stats.RecordWSFirstMessage(host, path, ttfb, true)
+	}
+	if !wsAttempt && p.stats != nil {
+		p.stats.RecordHTTP(host, req.Method, path, ttfb, false)
 	}
 	if err := bufferResponseBody(resp); err != nil {
 		resp.Body.Close()
@@ -148,6 +193,7 @@ func (p *Proxy) handleHTTP(br *bufio.Reader, client net.Conn, origIP string, ori
 }
 
 func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, origPort int) {
+	clientHSStart := time.Now()
 	if d := p.state.HandshakeDelayMs(); d > 0 {
 		time.Sleep(time.Duration(d) * time.Millisecond)
 	}
@@ -169,7 +215,11 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 		MinVersion:   tls.VersionTLS12,
 		NextProtos:   []string{"http/1.1"},
 	})
-	if err := tlsClient.Handshake(); err != nil {
+	err = tlsClient.Handshake()
+	if p.stats != nil {
+		p.stats.RecordTLSClient(host, time.Since(clientHSStart), err != nil)
+	}
+	if err != nil {
 		return
 	}
 	defer tlsClient.Close()
@@ -181,7 +231,11 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 		return
 	}
 	defer rawUp.Close()
+	upHSStart := time.Now()
 	tlsUp, err := dialUpstreamTLS(rawUp, host, p.tlsInsecure)
+	if p.stats != nil {
+		p.stats.RecordTLSUpstream(host, time.Since(upHSStart), err != nil)
+	}
 	if err != nil {
 		p.badGateway(tlsClient, "upstream TLS handshake", err)
 		return
@@ -197,30 +251,64 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 		if err != nil {
 			return
 		}
-		path := "/"
-		if req.URL != nil {
-			path = req.URL.RequestURI()
+		path := requestPath(req)
+		wsAttempt := headerHasToken(req.Header, "Upgrade", "websocket")
+		if p.stats != nil {
+			if wsAttempt {
+				p.stats.RecordWSStart(host, path)
+			} else {
+				p.stats.RecordHTTPStart(host, req.Method, path)
+			}
 		}
+		reqStart := time.Now()
 		if err := req.Write(tlsUp); err != nil {
+			if p.stats != nil {
+				if wsAttempt {
+					p.stats.RecordWSFirstMessage(host, path, time.Since(reqStart), true)
+				} else {
+					p.stats.RecordHTTP(host, req.Method, path, time.Since(reqStart), true)
+				}
+			}
 			p.badGateway(tlsClient, "write upstream request", err)
 			return
 		}
 		resp, err := http.ReadResponse(ubr, req)
 		if err != nil {
+			if p.stats != nil {
+				if wsAttempt {
+					p.stats.RecordWSFirstMessage(host, path, time.Since(reqStart), true)
+				} else {
+					p.stats.RecordHTTP(host, req.Method, path, time.Since(reqStart), true)
+				}
+			}
 			p.badGateway(tlsClient, "read upstream response", err)
 			return
 		}
+		ttfb := time.Since(reqStart)
 		if isWebSocketUpgrade(req, resp) {
 			clearDeadlines(tlsClient, tlsUp)
 			p.applyPathDelay("response", host, path, resp.StatusCode, req.Header, resp.Header)
 			err = resp.Write(tlsClient)
 			resp.Body.Close()
 			if err != nil {
+				if p.stats != nil {
+					p.stats.RecordWSFirstMessage(host, path, time.Since(reqStart), true)
+				}
 				return
 			}
 			clearDeadlines(tlsClient, tlsUp)
-			tunnel(tlsClient, cbr, tlsUp, ubr)
+			tunnel(tlsClient, cbr, tlsUp, ubr, func() {
+				if p.stats != nil {
+					p.stats.RecordWSFirstMessage(host, path, time.Since(reqStart), false)
+				}
+			})
 			return
+		}
+		if wsAttempt && p.stats != nil {
+			p.stats.RecordWSFirstMessage(host, path, ttfb, true)
+		}
+		if !wsAttempt && p.stats != nil {
+			p.stats.RecordHTTP(host, req.Method, path, ttfb, false)
 		}
 		if err := bufferResponseBody(resp); err != nil {
 			resp.Body.Close()
@@ -237,6 +325,13 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 			return
 		}
 	}
+}
+
+func requestPath(req *http.Request) string {
+	if req == nil || req.URL == nil {
+		return "/"
+	}
+	return netstats.StripQuery(req.URL.Path)
 }
 
 func isWebSocketUpgrade(req *http.Request, resp *http.Response) bool {
@@ -287,7 +382,8 @@ func (p *Proxy) badGateway(client io.Writer, step string, err error) {
 
 // tunnel relays bytes both ways after a WebSocket upgrade, draining bufio leftovers first.
 // When either direction ends, both sockets are closed so the peer copy unblocks.
-func tunnel(client net.Conn, cbr *bufio.Reader, upstream net.Conn, ubr *bufio.Reader) {
+// onFirstByte is called once when the first byte is observed on either direction (after 101).
+func tunnel(client net.Conn, cbr *bufio.Reader, upstream net.Conn, ubr *bufio.Reader, onFirstByte func()) {
 	var once sync.Once
 	done := make(chan struct{})
 	finish := func() {
@@ -297,15 +393,35 @@ func tunnel(client net.Conn, cbr *bufio.Reader, upstream net.Conn, ubr *bufio.Re
 			close(done)
 		})
 	}
+	var first sync.Once
+	noteFirst := func() {
+		if onFirstByte == nil {
+			return
+		}
+		first.Do(onFirstByte)
+	}
 	go func() {
-		_, _ = io.Copy(upstream, cbr)
+		_, _ = io.Copy(upstream, &firstByteReader{r: cbr, note: noteFirst})
 		finish()
 	}()
 	go func() {
-		_, _ = io.Copy(client, ubr)
+		_, _ = io.Copy(client, &firstByteReader{r: ubr, note: noteFirst})
 		finish()
 	}()
 	<-done
+}
+
+type firstByteReader struct {
+	r    io.Reader
+	note func()
+}
+
+func (f *firstByteReader) Read(p []byte) (int, error) {
+	n, err := f.r.Read(p)
+	if n > 0 && f.note != nil {
+		f.note()
+	}
+	return n, err
 }
 
 func (p *Proxy) applyPathDelay(phase, host, path string, statusCode int, reqH, respH http.Header) {

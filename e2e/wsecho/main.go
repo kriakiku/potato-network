@@ -1,7 +1,8 @@
 // Dual-purpose e2e origin on :80 (MITM-redirected):
-//   GET /          → potato-e2e-origin (path-delay / shape-exclude tests)
-//   WebSocket /    → echo (MITM tunnel tests)
-//   -client ws://… → one-shot client for e2e harness
+//   GET /              → potato-e2e-origin (path-delay / shape-exclude tests)
+//   GET /sleep/{ms}    → sleep then respond (slowHTTP e2e)
+//   WebSocket /        → echo (MITM tunnel tests)
+//   -client ws://…     → one-shot client for e2e harness
 package main
 
 import (
@@ -11,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +29,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/sleep/", handleSleep)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if isWSUpgrade(r) {
 			websocket.Handler(func(ws *websocket.Conn) {
@@ -38,6 +41,30 @@ func main() {
 	})
 	log.Printf("e2e origin listening %s (http+ws)", *addr)
 	log.Fatal(http.ListenAndServe(*addr, mux))
+}
+
+// GET /sleep/{ms} sleeps then returns a short body (for slowHTTP top-N e2e).
+func handleSleep(w http.ResponseWriter, r *http.Request) {
+	if isWSUpgrade(r) {
+		http.Error(w, "websocket not supported on /sleep", http.StatusBadRequest)
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/sleep/")
+	rest = strings.Trim(rest, "/")
+	if rest == "" {
+		http.Error(w, "usage: /sleep/{ms}", http.StatusBadRequest)
+		return
+	}
+	ms, err := strconv.Atoi(rest)
+	if err != nil || ms < 0 {
+		http.Error(w, "invalid ms", http.StatusBadRequest)
+		return
+	}
+	if ms > 10_000 {
+		ms = 10_000
+	}
+	time.Sleep(time.Duration(ms) * time.Millisecond)
+	_, _ = fmt.Fprintf(w, "slept-%d", ms)
 }
 
 func isWSUpgrade(r *http.Request) bool {

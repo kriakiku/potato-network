@@ -203,6 +203,135 @@ func TestE2E_WebSocketEchoViaMITM(t *testing.T) {
 	t.Logf("websocket echo via MITM ok in %s", elapsed)
 }
 
+func TestE2E_StatsEventsAndSlowHTTP(t *testing.T) {
+	waitHealthy(t, 60*time.Second)
+	waitOrigin(t, 30*time.Second)
+	waitWSEcho(t, 30*time.Second)
+	putPassthrough(t)
+
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not available")
+	}
+
+	apiPOST(t, "/v1/stats/reset")
+
+	// Distinct sleeps so top-5 slowHTTP is deterministic (slowest = /sleep/300).
+	sleeps := []int{50, 100, 150, 200, 250, 300}
+	for _, ms := range sleeps {
+		curlInNetns(t, fmt.Sprintf("http://127.0.0.1/sleep/%d?tok=secret", ms))
+	}
+	// One more plain hit + WS for events mix
+	curlInNetns(t, "http://127.0.0.1/")
+	wsOut, err := exec.Command(
+		"docker", "run", "--rm",
+		"--network", "container:"+containerName(),
+		"potatonetwork-wsecho:e2e",
+		"-client", "ws://127.0.0.1/",
+	).CombinedOutput()
+	if err != nil || !strings.Contains(string(wsOut), "ok") {
+		t.Fatalf("ws for stats e2e: %v\n%s", err, wsOut)
+	}
+
+	code, body := apiGET(t, "/v1/stats")
+	if code != 200 {
+		t.Fatalf("stats status=%d body=%s", code, body)
+	}
+	var snap struct {
+		Events []struct {
+			Kind string `json:"kind"`
+			Path string `json:"path"`
+			Host string `json:"host"`
+		} `json:"events"`
+		SlowHTTP []struct {
+			Host       string `json:"host"`
+			Method     string `json:"method"`
+			Path       string `json:"path"`
+			DurationMs int64  `json:"durationMs"`
+			Failed     bool   `json:"failed"`
+		} `json:"slowHTTP"`
+	}
+	if err := json.Unmarshal([]byte(body), &snap); err != nil {
+		t.Fatal(err)
+	}
+
+	httpStarts, wsStarts := 0, 0
+	for _, ev := range snap.Events {
+		if strings.Contains(ev.Path, "?") {
+			t.Fatalf("event path still has query: %+v", ev)
+		}
+		switch ev.Kind {
+		case "http_start":
+			httpStarts++
+		case "ws_start":
+			wsStarts++
+		}
+	}
+	if httpStarts < 6 {
+		t.Fatalf("http_start events=%d want ≥6: %+v", httpStarts, snap.Events)
+	}
+	if wsStarts < 1 {
+		t.Fatalf("ws_start events=%d want ≥1", wsStarts)
+	}
+
+	if len(snap.SlowHTTP) != 5 {
+		t.Fatalf("slowHTTP len=%d want 5: %+v", len(snap.SlowHTTP), snap.SlowHTTP)
+	}
+	for i := 1; i < len(snap.SlowHTTP); i++ {
+		if snap.SlowHTTP[i].DurationMs > snap.SlowHTTP[i-1].DurationMs {
+			t.Fatalf("slowHTTP not sorted desc: %+v", snap.SlowHTTP)
+		}
+	}
+	top := snap.SlowHTTP[0]
+	if top.Path != "/sleep/300" {
+		t.Fatalf("slowest path=%q want /sleep/300 (duration=%d): %+v", top.Path, top.DurationMs, snap.SlowHTTP)
+	}
+	if strings.Contains(top.Path, "?") {
+		t.Fatalf("slowHTTP path has query: %+v", top)
+	}
+	if top.DurationMs < 250 {
+		t.Fatalf("top durationMs=%d too small for /sleep/300", top.DurationMs)
+	}
+	for _, s := range snap.SlowHTTP {
+		if strings.HasPrefix(s.Path, "/socket") || s.Method == "" && strings.Contains(s.Path, "ws") {
+			t.Fatalf("WS leaked into slowHTTP: %+v", s)
+		}
+	}
+
+	apiPOST(t, "/v1/stats/reset")
+	code, body = apiGET(t, "/v1/stats")
+	if code != 200 {
+		t.Fatalf("stats after reset status=%d", code)
+	}
+	if err := json.Unmarshal([]byte(body), &snap); err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Events) != 0 || len(snap.SlowHTTP) != 0 {
+		t.Fatalf("expected empty events/slowHTTP after reset: events=%d slow=%d", len(snap.Events), len(snap.SlowHTTP))
+	}
+}
+
+func curlInNetns(t *testing.T, url string) {
+	t.Helper()
+	out, err := exec.Command(
+		"docker", "run", "--rm",
+		"--network", "container:"+containerName(),
+		"curlimages/curl:8.5.0",
+		"-sS", "--max-time", "30",
+		url,
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("curl %s: %v\n%s", url, err, out)
+	}
+}
+
+func apiPOST(t *testing.T, path string) {
+	t.Helper()
+	code, body := apiJSON(t, http.MethodPost, path, nil)
+	if code != 200 {
+		t.Fatalf("POST %s status=%d body=%s", path, code, body)
+	}
+}
+
 func waitWSEcho(t *testing.T, timeout time.Duration) {
 	t.Helper()
 	if _, err := exec.LookPath("docker"); err != nil {

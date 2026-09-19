@@ -20,6 +20,7 @@ import (
 	"github.com/kriakiku/potato-network/internal/croncatalog"
 	"github.com/kriakiku/potato-network/internal/dnsfwd"
 	"github.com/kriakiku/potato-network/internal/mitm"
+	"github.com/kriakiku/potato-network/internal/netstats"
 	"github.com/kriakiku/potato-network/internal/rules"
 	pnruntime "github.com/kriakiku/potato-network/internal/runtime"
 	"github.com/kriakiku/potato-network/internal/shape"
@@ -124,6 +125,8 @@ func main() {
 	}
 	log.Printf("CA ready at %s", ca.CertPath(cfg.DataDir))
 
+	stats := netstats.New()
+
 	rulesPath := rules.Path(cfg.DataDir)
 	if err := rules.EnsureDefault(rulesPath); err != nil {
 		log.Fatalf("rules: %v", err)
@@ -136,12 +139,12 @@ func main() {
 		log.Printf("rules compile warning: %v (path delay disabled until fixed)", err)
 	}
 
-	dns := dnsfwd.New(dnsUpstream)
+	dns := dnsfwd.New(dnsUpstream, stats)
 	if err := dns.Start(); err != nil {
 		log.Fatalf("dns: %v", err)
 	}
 
-	proxy := mitm.New(config.MITMPort, bundle, eng, st, cfg.TLSInsecure)
+	proxy := mitm.New(config.MITMPort, bundle, eng, st, stats, cfg.TLSInsecure)
 	if err := proxy.Start(); err != nil {
 		log.Fatalf("mitm: %v", err)
 	}
@@ -156,7 +159,7 @@ func main() {
 	cronbaseline.Start(cfg.BaselineCron, st)
 	croncatalog.Start(cfg.CatalogCron, cat, cfg.RadarCatalogURL)
 
-	srv := api.New(cfg, st, cat, sh, eng, bundle)
+	srv := api.New(cfg, st, cat, sh, eng, bundle, stats)
 	httpSrv := &http.Server{Addr: cfg.APIAddr, Handler: srv.Handler()}
 	go func() {
 		log.Printf("API listening %s (auth=%v)", cfg.APIAddr, cfg.APIToken != "")

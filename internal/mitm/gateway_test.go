@@ -70,7 +70,7 @@ func TestUpstreamTLSFailureAfterClientHandshakeReturns502(t *testing.T) {
 	origPort, _ := strconv.Atoi(origPortStr)
 
 	st := pnruntime.New(t.TempDir(), nil, nil)
-	p := New(0, bundle, nil, st, true)
+	p := New(0, bundle, nil, st, nil, true)
 
 	proxyLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

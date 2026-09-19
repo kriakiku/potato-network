@@ -193,7 +193,7 @@ func collectEndpoints(doc swaggerDoc) []endpoint {
 }
 
 func tagOrder(endpoints []endpoint) []string {
-	preferred := []string{"system", "profile", "baseline", "catalog", "ca", "rules"}
+	preferred := []string{"system", "profile", "baseline", "catalog", "ca", "rules", "stats"}
 	seen := map[string]struct{}{}
 	var order []string
 	for _, t := range preferred {

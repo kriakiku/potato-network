@@ -9,6 +9,7 @@ import (
 	"github.com/kriakiku/potato-network/internal/ca"
 	"github.com/kriakiku/potato-network/internal/catalog"
 	"github.com/kriakiku/potato-network/internal/config"
+	"github.com/kriakiku/potato-network/internal/netstats"
 	"github.com/kriakiku/potato-network/internal/rules"
 	pnruntime "github.com/kriakiku/potato-network/internal/runtime"
 	"github.com/kriakiku/potato-network/internal/shape"
@@ -75,5 +76,5 @@ func newTestAPI(t *testing.T, cfg config.Config) *api.Server {
 	}, cfg.PathDelayMaxMs)
 	_ = rules.EnsureDefault(rules.Path(cfg.DataDir))
 	_ = eng.Reload()
-	return api.New(cfg, st, cat, sh, eng, bundle)
+	return api.New(cfg, st, cat, sh, eng, bundle, netstats.New())
 }

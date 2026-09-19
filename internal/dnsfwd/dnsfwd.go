@@ -10,19 +10,21 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kriakiku/potato-network/internal/netstats"
 	"github.com/miekg/dns"
 )
 
 // Server is a simple DNS forwarder on :53 (no rewrite).
 type Server struct {
 	upstream string
+	stats    *netstats.Store
 	udp      *dns.Server
 	tcp      *dns.Server
 	mu       sync.Mutex
 }
 
-func New(upstream string) *Server {
-	return &Server{upstream: normalizeUpstream(upstream)}
+func New(upstream string, stats *netstats.Store) *Server {
+	return &Server{upstream: normalizeUpstream(upstream), stats: stats}
 }
 
 // DetectUpstream reads the first non-loopback nameserver from /etc/resolv.conf
@@ -125,18 +127,32 @@ func (s *Server) Stop() {
 
 func (s *Server) Upstream() string { return s.upstream }
 
+func questionDomain(r *dns.Msg) string {
+	if r == nil || len(r.Question) == 0 {
+		return ""
+	}
+	return r.Question[0].Name
+}
+
 func (s *Server) serve(w dns.ResponseWriter, r *dns.Msg) {
+	domain := questionDomain(r)
 	c := &dns.Client{Net: "udp", Timeout: 5 * time.Second}
-	resp, _, err := c.Exchange(r, s.upstream)
+	resp, rtt, err := c.Exchange(r, s.upstream)
 	if err != nil {
 		c.Net = "tcp"
-		resp, _, err = c.Exchange(r, s.upstream)
+		resp, rtt, err = c.Exchange(r, s.upstream)
 	}
 	if err != nil {
+		if s.stats != nil {
+			s.stats.RecordDNS(domain, rtt, true)
+		}
 		m := new(dns.Msg)
 		m.SetRcode(r, dns.RcodeServerFailure)
 		_ = w.WriteMsg(m)
 		return
+	}
+	if s.stats != nil {
+		s.stats.RecordDNS(domain, rtt, false)
 	}
 	_ = w.WriteMsg(resp)
 }

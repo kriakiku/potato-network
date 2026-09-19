@@ -44,3 +44,8 @@ type RulesStatus struct {
 	Compile string `json:"compile"`
 	OK      bool   `json:"ok" example:"true"`
 }
+
+// StatsResetResponse is returned by POST /v1/stats/reset.
+type StatsResetResponse struct {
+	OK bool `json:"ok" example:"true"`
+}
