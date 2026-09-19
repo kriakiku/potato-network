@@ -107,15 +107,18 @@ func (p *Proxy) handleHTTP(br *bufio.Reader, client net.Conn, origIP string, ori
 	target := net.JoinHostPort(origIP, strconv.Itoa(origPort))
 	up, err := dialMarked(target)
 	if err != nil {
+		p.badGateway(client, "dial upstream", err)
 		return
 	}
 	defer up.Close()
 	ubr := bufio.NewReader(up)
 	if err := req.Write(up); err != nil {
+		p.badGateway(client, "write upstream request", err)
 		return
 	}
 	resp, err := http.ReadResponse(ubr, req)
 	if err != nil {
+		p.badGateway(client, "read upstream response", err)
 		return
 	}
 	path := "/"
@@ -123,6 +126,7 @@ func (p *Proxy) handleHTTP(br *bufio.Reader, client net.Conn, origIP string, ori
 		path = req.URL.Path
 	}
 	if isWebSocketUpgrade(req, resp) {
+		clearDeadlines(client, up)
 		p.applyPathDelay("response", host, path, resp.StatusCode, req.Header, resp.Header)
 		err = resp.Write(client)
 		resp.Body.Close()
@@ -135,9 +139,10 @@ func (p *Proxy) handleHTTP(br *bufio.Reader, client net.Conn, origIP string, ori
 	}
 	if err := bufferResponseBody(resp); err != nil {
 		resp.Body.Close()
-		log.Printf("mitm buffer body: %v", err)
+		p.badGateway(client, "buffer upstream body", err)
 		return
 	}
+	clearDeadlines(client, up)
 	p.applyPathDelay("response", host, path, resp.StatusCode, req.Header, resp.Header)
 	_ = resp.Write(client)
 }
@@ -170,6 +175,7 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 	target := net.JoinHostPort(origIP, strconv.Itoa(origPort))
 	rawUp, err := dialMarked(target)
 	if err != nil {
+		p.badGateway(tlsClient, "dial upstream", err)
 		return
 	}
 	defer rawUp.Close()
@@ -177,9 +183,9 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 		ServerName:         host,
 		InsecureSkipVerify: p.tlsInsecure,
 		MinVersion:         tls.VersionTLS12,
-		NextProtos:         []string{"http/1.1"},
 	})
 	if err := tlsUp.Handshake(); err != nil {
+		p.badGateway(tlsClient, "upstream TLS handshake", err)
 		return
 	}
 	defer tlsUp.Close()
@@ -198,13 +204,16 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 			path = req.URL.RequestURI()
 		}
 		if err := req.Write(tlsUp); err != nil {
+			p.badGateway(tlsClient, "write upstream request", err)
 			return
 		}
 		resp, err := http.ReadResponse(ubr, req)
 		if err != nil {
+			p.badGateway(tlsClient, "read upstream response", err)
 			return
 		}
 		if isWebSocketUpgrade(req, resp) {
+			clearDeadlines(tlsClient, tlsUp)
 			p.applyPathDelay("response", host, path, resp.StatusCode, req.Header, resp.Header)
 			err = resp.Write(tlsClient)
 			resp.Body.Close()
@@ -217,9 +226,10 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 		}
 		if err := bufferResponseBody(resp); err != nil {
 			resp.Body.Close()
-			log.Printf("mitm buffer body: %v", err)
+			p.badGateway(tlsClient, "buffer upstream body", err)
 			return
 		}
+		clearDeadlines(tlsClient, tlsUp)
 		p.applyPathDelay("response", host, path, resp.StatusCode, req.Header, resp.Header)
 		err = resp.Write(tlsClient)
 		if err != nil {
@@ -256,6 +266,26 @@ func clearDeadlines(conns ...interface{ SetDeadline(time.Time) error }) {
 	for _, c := range conns {
 		_ = c.SetDeadline(time.Time{})
 	}
+}
+
+
+func writeBadGateway(w io.Writer, err error) {
+	msg := "Bad Gateway"
+	if err != nil {
+		msg = err.Error()
+	}
+	msg = strings.NewReplacer("\r", " ", "\n", " ").Replace(msg)
+	if len(msg) > 512 {
+		msg = msg[:512]
+	}
+	body := msg + "\n"
+	hdr := fmt.Sprintf("HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\nContent-Length: %d\r\n\r\n", len(body))
+	_, _ = io.WriteString(w, hdr+body)
+}
+
+func (p *Proxy) badGateway(client io.Writer, step string, err error) {
+	log.Printf("mitm %s: %v", step, err)
+	writeBadGateway(client, fmt.Errorf("%s: %w", step, err))
 }
 
 // tunnel relays bytes both ways after a WebSocket upgrade, draining bufio leftovers first.
