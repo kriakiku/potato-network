@@ -151,19 +151,23 @@ func (e *Engine) ReloadIfChanged() {
 
 func (e *Engine) compileEnv() map[string]any {
 	return map[string]any{
-		"phase":       "",
-		"host":        "",
-		"path":        "",
-		"request":     map[string]string{},
-		"response":    map[string]string{},
-		"country":     "",
-		"tier":        "",
-		"passthrough": false,
-		"header":      headerFn,
-		"match":       matchFn,
-		"lower":       strings.ToLower,
-		"route":       e.routeFn,
-		"jitter":      jitterFn,
+		"phase":        "",
+		"host":         "",
+		"path":         "",
+		"request":      map[string]string{},
+		"response":     map[string]string{},
+		"country":      "",
+		"tier":         "",
+		"passthrough":  false,
+		"status_code":  0,
+		"cloudflare":   false,
+		"cloudfront":   false,
+		"websocket":    false,
+		"header":       headerFn,
+		"match":        matchFn,
+		"lower":        strings.ToLower,
+		"route":        e.routeFn,
+		"jitter":       jitterFn,
 	}
 }
 
@@ -188,7 +192,8 @@ func (e *Engine) currentProfile() ProfileInfo {
 }
 
 // Eval runs the script and returns a clamped Result (today: delay_ms).
-func (e *Engine) Eval(phase, host, path string, reqH, respH map[string]string) (Result, error) {
+// statusCode is the origin HTTP status (used for websocket / status_code bindings).
+func (e *Engine) Eval(phase, host, path string, statusCode int, reqH, respH map[string]string) (Result, error) {
 	e.ReloadIfChanged()
 	e.mu.RLock()
 	prog := e.program
@@ -202,15 +207,21 @@ func (e *Engine) Eval(phase, host, path string, reqH, respH map[string]string) (
 		return Result{}, nil
 	}
 	p := e.currentProfile()
+	req := lowerKeys(reqH)
+	resp := lowerKeys(respH)
 	env := e.compileEnv()
 	env["phase"] = phase
 	env["host"] = host
 	env["path"] = path
-	env["request"] = lowerKeys(reqH)
-	env["response"] = lowerKeys(respH)
+	env["request"] = req
+	env["response"] = resp
 	env["country"] = p.Country
 	env["tier"] = p.Tier
 	env["passthrough"] = p.Passthrough
+	env["status_code"] = statusCode
+	env["cloudflare"] = DetectCloudflare(resp)
+	env["cloudfront"] = DetectCloudfront(resp)
+	env["websocket"] = DetectWebsocket(statusCode, req, resp)
 	out, err := expr.Run(prog, env)
 	if err != nil {
 		return Result{}, err

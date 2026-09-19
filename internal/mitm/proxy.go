@@ -121,7 +121,7 @@ func (p *Proxy) handleHTTP(br *bufio.Reader, client net.Conn, origIP string, ori
 	if req.URL != nil {
 		path = req.URL.Path
 	}
-	p.applyPathDelay("response", host, path, req.Header, resp.Header)
+	p.applyPathDelay("response", host, path, resp.StatusCode, req.Header, resp.Header)
 	if isWebSocketUpgrade(req, resp) {
 		err = resp.Write(client)
 		resp.Body.Close()
@@ -192,7 +192,7 @@ func (p *Proxy) handleTLS(br *bufio.Reader, client net.Conn, origIP string, orig
 		if err != nil {
 			return
 		}
-		p.applyPathDelay("response", host, path, req.Header, resp.Header)
+		p.applyPathDelay("response", host, path, resp.StatusCode, req.Header, resp.Header)
 		if isWebSocketUpgrade(req, resp) {
 			err = resp.Write(tlsClient)
 			resp.Body.Close()
@@ -264,11 +264,11 @@ func tunnel(client net.Conn, cbr *bufio.Reader, upstream net.Conn, ubr *bufio.Re
 	<-done
 }
 
-func (p *Proxy) applyPathDelay(phase, host, path string, reqH, respH http.Header) {
+func (p *Proxy) applyPathDelay(phase, host, path string, statusCode int, reqH, respH http.Header) {
 	if p.rules == nil || p.state.Profile().Passthrough {
 		return
 	}
-	res, err := p.rules.Eval(phase, host, path, headerMap(reqH), headerMap(respH))
+	res, err := p.rules.Eval(phase, host, path, statusCode, headerMap(reqH), headerMap(respH))
 	if err != nil {
 		log.Printf("rules eval: %v", err)
 		return

@@ -45,6 +45,10 @@ Max delay defaults to **60000** ms (1 minute). Override with `POTATONETWORK_PATH
 | `country` | Active profile country code (e.g. `BD`, `AF`); empty when passthrough |
 | `tier` | Active profile tier (`stable` / `typical` / `poor`); empty when passthrough |
 | `passthrough` | `true` when last-mile shaping is off |
+| `status_code` | Origin HTTP status code (int) |
+| `cloudflare` | `true` when the response looks like Cloudflare (`cf-ray`, `cf-cache-status`, or `Server` contains `cloudflare`) |
+| `cloudfront` | `true` when the response looks like CloudFront (`Via` contains `cloudfront`, or `x-amz-cf-id` set) |
+| `websocket` | `true` when status is `101` and both request and response `Upgrade` include `websocket` (same criterion as MITM tunnel) |
 
 ### Branch by country / tier
 
@@ -106,7 +110,27 @@ Useful when you want PathExtra **and** an independent lab offset (here `jitter(1
 { "delay_ms": route("aws-eu-central-1") + jitter(150, 40) }
 ```
 
+### Skip delay for WebSocket / Cloudflare; soften CloudFront
+
+```text
+if websocket {
+  { "delay_ms": 0 }
+} else {
+  if cloudflare {
+    { "delay_ms": 0 }
+  } else {
+    if cloudfront {
+      { "delay_ms": jitter(route("aws-eu-central-1"), 20) }
+    } else {
+      { "delay_ms": route("aws-eu-central-1") }
+    }
+  }
+}
+```
+
 ### Branching on CDN / path / headers
+
+Manual header checks still work (e.g. when you need a custom signal):
 
 ```text
 if lower(header(response, "via")) contains "cloudfront" {
