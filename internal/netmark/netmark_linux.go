@@ -4,6 +4,7 @@ package netmark
 
 import (
 	"context"
+	"errors"
 	"net"
 	"syscall"
 	"time"
@@ -36,6 +37,11 @@ func markControl(network, address string, c syscall.RawConn) error {
 	})
 	if err != nil {
 		return err
+	}
+	// Unit tests / unprivileged hosts: SO_MARK needs CAP_NET_ADMIN. Fall back to
+	// an unmarked dial so MITM unit tests still work outside a Potato netns.
+	if opErr != nil && (errors.Is(opErr, syscall.EPERM) || errors.Is(opErr, syscall.EACCES)) {
+		return nil
 	}
 	return opErr
 }
