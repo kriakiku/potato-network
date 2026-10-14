@@ -7,8 +7,9 @@ require (
 	github.com/expr-lang/expr v1.17.8
 	github.com/google/nftables v0.3.0
 	github.com/miekg/dns v1.1.73
+	github.com/refraction-networking/utls v1.8.2
 	github.com/vishvananda/netlink v1.3.1
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 )
 
 require (
@@ -17,7 +18,6 @@ require (
 	github.com/klauspost/compress v1.17.4 // indirect
 	github.com/mdlayher/netlink v1.7.3-0.20250113171957-fbb4dce95f42 // indirect
 	github.com/mdlayher/socket v0.5.0 // indirect
-	github.com/refraction-networking/utls v1.8.2 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
